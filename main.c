@@ -6,13 +6,9 @@
 
 #define APB_CLOCK SYSTEM_CORE_CLOCK
 
-#define I2C_CLKRATE (1000000) // I2C Bus clock rate - must be lower the Logic clock rate
-#define I2C_PRERATE (2000000) // I2C Logic clock rate - must be higher than Bus clock rate
-#define I2C_ADDR    (0x08)    // I2C address
-
 uint8_t i2c_registers[16] = {0x00};
 
-void setup_i2c() {
+void setup_i2c(uint8_t address) {
     uint16_t tempreg;
 
     // Enable GPIOC and I2C
@@ -32,7 +28,8 @@ void setup_i2c() {
     RCC->APB1PRSTR &= ~RCC_APB1Periph_I2C1;
 
     // Set module clock frequency
-    I2C1->CTLR2 |= (APB_CLOCK/I2C_PRERATE) & I2C_CTLR2_FREQ;
+    uint32_t prerate = 2000000; // I2C Logic clock rate - must be higher than Bus clock rate
+    I2C1->CTLR2 |= (APB_CLOCK/prerate) & I2C_CTLR2_FREQ;
 
     // Enable interrupts
     I2C1->CTLR2 |= I2C_CTLR2_ITBUFEN;
@@ -42,31 +39,14 @@ void setup_i2c() {
     NVIC_EnableIRQ(I2C1_EV_IRQn); // Event interrupt
     //NVIC_EnableIRQ(I2C1_ER_IRQn); // Error interrupt
 
-    // Set clock config
-    tempreg = 0;
-#if (I2C_CLKRATE <= 100000)
-    // standard mode good to 100kHz
-    tempreg = (APB_CLOCK/(2*I2C_CLKRATE))&I2C_CKCFGR_CCR;
-    printf("Standard mode\n");
-#else
-    // fast mode over 100kHz
-    printf("Fast mode\n");
-#ifndef I2C_DUTY
-    // 33% duty cycle
-    printf("33%% duty cycle\n");
-    tempreg = (APB_CLOCK/(3*I2C_CLKRATE))&I2C_CKCFGR_CCR;
-#else
-    // 36% duty cycle
-    printf("36%% duty cycle\n");
-    tempreg = (APB_CLOCK/(25*I2C_CLKRATE))&I2C_CKCFGR_CCR;
-    tempreg |= I2C_CKCFGR_DUTY;
-#endif
-    tempreg |= I2C_CKCFGR_FS;
-#endif
-    I2C1->CKCFGR = tempreg;
+    // Set clock configuration
+    uint32_t clockrate = 1000000; // I2C Bus clock rate - must be lower the Logic clock rate
+    I2C1->CKCFGR = ((APB_CLOCK/(3*clockrate))&I2C_CKCFGR_CCR) | I2C_CKCFGR_FS; // Fast mode 33% duty cycle
+    //I2C1->CKCFGR = ((APB_CLOCK/(25*clockrate))&I2C_CKCFGR_CCR) | I2C_CKCFGR_DUTY | I2C_CKCFGR_FS; // Fast mode 36% duty cycle
+    //I2C1->CKCFGR = (APB_CLOCK/(2*clockrate))&I2C_CKCFGR_CCR; // Standard mode good to 100kHz
 
     // Set I2C address
-    I2C1->OADDR1 = I2C_ADDR << 1;
+    I2C1->OADDR1 = address << 1;
 
     // Enable I2C
     I2C1->CTLR1 |= I2C_CTLR1_PE;
@@ -165,7 +145,7 @@ int main() {
 
     Delay_Ms(100);
 
-    setup_i2c();
+    setup_i2c(0x9);
 
     // Enable GPIOs
     RCC->APB2PCENR |= RCC_APB2Periph_GPIOD;
@@ -174,7 +154,6 @@ int main() {
     GPIOD->CFGLR &= ~(0xf<<(4*0));
     GPIOD->CFGLR |= (GPIO_Speed_10MHz | GPIO_CNF_OUT_PP)<<(4*0);
 
-    bool value = true;
     while (1) {
         if (dbg_start_req) {
             printf("Start\n");
@@ -221,13 +200,10 @@ int main() {
             printf("Error interrupt called\n");
         }
 
-        // Blink LED
-        if (value) {
-            GPIOD-> BSHR |= 1;
-        } else {
+        if (i2c_registers[0] & 1) {
             GPIOD-> BSHR |= 1 << 16;
+        } else {
+            GPIOD-> BSHR |= 1;
         }
-        value = !value;
-        Delay_Ms(500);
     }
 }
